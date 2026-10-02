@@ -223,12 +223,19 @@ export default function App() {
                   Secure your seat in the <span className="text-gold font-semibold">{courses[selectedCourse].title}</span>. 
                   Complete your registration and proceed to our secure payment gateway.
                 </p>
-                <button 
+                <button
                   onClick={() => handleRegister(courses[selectedCourse].id)}
-                  className="btn-primary text-lg inline-flex items-center gap-3 pulse-glow"
+                  disabled={selectedCourse === 'advance'}
+                  className={selectedCourse === 'advance'
+                    ? 'inline-flex items-center gap-3 rounded-lg border border-white/10 bg-white/10 px-6 py-3 text-lg text-white/40 cursor-not-allowed'
+                    : 'btn-primary text-lg inline-flex items-center gap-3 pulse-glow'}
                 >
                   <span>Register & Proceed to Payment ({courses[selectedCourse].price})</span>
-                  <ArrowRight className="w-5 h-5" />
+                  {selectedCourse === 'advance' ? (
+                    <span className="text-sm font-semibold">Coming soon</span>
+                  ) : (
+                    <ArrowRight className="w-5 h-5" />
+                  )}
                 </button>
                 <p className="text-xs text-white/40 mt-4">Secure checkout • Instant access upon payment • 100% Satisfaction guarantee</p>
               </div>
