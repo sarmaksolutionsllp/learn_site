@@ -1,6 +1,13 @@
+const GOOGLE_SHEET_WEBHOOK_URL =
+  process.env.GOOGLE_SHEET_WEBHOOK_URL?.trim();
+
 exports.handler = async (event) => {
-  if (event.httpMethod !== 'POST') {
-    return {
+  // ==================================================
+  // ONLY POST REQUESTS
+  // ==================================================
+
+  if (event.httpMethod !== "POST") {
+   return {
       statusCode: 405,
       headers: {
         'Content-Type': 'application/json',
@@ -13,8 +20,11 @@ exports.handler = async (event) => {
   }
 
   try {
-    const body = JSON.parse(event.body || '{}');
+    // ==================================================
+    // READ REQUEST BODY
+    // ==================================================
 
+    const body = JSON.parse(event.body || "{}");
     const {
       name,
       email,
@@ -109,13 +119,15 @@ exports.handler = async (event) => {
     // ==================================================
 
     const clientId =
-      process.env.CASHFREE_CLIENT_ID;
+      process.env.CASHFREE_CLIENT_ID?.trim();
 
     const clientSecret =
-      process.env.CASHFREE_CLIENT_SECRET;
+      process.env.CASHFREE_CLIENT_SECRET?.trim();
 
     const mode =
-      process.env.CASHFREE_ENV  || 'sandbox';
+      (process.env.CASHFREE_ENV || process.env.CASHFREE_MODE || 'sandbox')
+        .trim()
+        .toLowerCase();
 
 
     if (!clientId || !clientSecret) {
@@ -128,6 +140,19 @@ exports.handler = async (event) => {
           success: false,
           error:
             'Cashfree credentials are missing.',
+        }),
+      };
+    }
+
+    if (mode !== 'sandbox' && mode !== 'production') {
+      return {
+        statusCode: 500,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          success: false,
+          error: 'CASHFREE_ENV must be either sandbox or production.',
         }),
       };
     }
@@ -186,6 +211,10 @@ exports.handler = async (event) => {
     const callbackUrl =
       `${siteUrl.replace(/\/$/, '')}/payment-success`;
 
+    const returnUrl =
+      `${callbackUrl}?order_id={order_id}&course=${encodeURIComponent(
+        course
+      )}`;
 
     // ==================================================
     // CREATE CASHFREE ORDER
@@ -235,10 +264,10 @@ exports.handler = async (event) => {
               `CUST_${Date.now()}`,
 
             customer_name:
-              name,
+              String(name).trim(),
 
             customer_email:
-              email,
+              String(email).trim(),
 
             customer_phone:
               normalizedPhone,
@@ -293,6 +322,10 @@ exports.handler = async (event) => {
           .filter(Boolean)
           .join(' - ');
 
+      console.error(
+        "Cashfree API error:",
+        result
+      );
 
       return {
         statusCode: response.status,
@@ -307,11 +340,55 @@ exports.handler = async (event) => {
 
           error:
             errorMessage ||
-            'Unable to create payment order.',
+            "Unable to create payment order.",
         }),
       };
     }
 
+    // ==================================================
+    // CASHFREE SUCCESS
+    // ==================================================
+
+    const finalOrderId =
+      result.order_id || orderId;
+
+    const paymentSessionId =
+      result.payment_session_id;
+
+    if (!paymentSessionId) {
+      console.error(
+        "Cashfree response missing payment_session_id:",
+        result
+      );
+
+      return {
+        statusCode: 500,
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          success: false,
+          error:
+            "Cashfree did not return a payment session.",
+       }),
+      };
+    }
+
+    // ==================================================
+    // SAVE REGISTRATION TO GOOGLE SHEET
+    // ==================================================
+
+    await saveRegistrationToGoogleSheet({
+      orderId: finalOrderId,
+      name: String(name).trim(),
+      email: String(email).trim(),
+      phone: normalizedPhone,
+      country: country || "",
+      countryCode: countryCode || "",
+      dialCode: dialCode || "",
+      paymentStatus: "PENDING",
+    });
 
     // ==================================================
     // SUCCESS
@@ -381,3 +458,79 @@ exports.handler = async (event) => {
     };
   }
 };
+
+
+// ======================================================
+// GOOGLE SHEET FUNCTION
+// ======================================================
+
+async function saveRegistrationToGoogleSheet(data) {
+  const payload = {
+    action: "create",
+    orderId: data.orderId,
+    name: data.name,
+    email: data.email,
+    phone: data.phone,
+    country: data.country,
+    countryCode: data.countryCode,
+    dialCode: data.dialCode,
+    paymentStatus: data.paymentStatus || "PENDING",
+  };
+
+  if (!GOOGLE_SHEET_WEBHOOK_URL) {
+    const message = "GOOGLE_SHEET_WEBHOOK_URL is not configured.";
+    console.error(message, { payload });
+    throw new Error(message);
+  }
+
+  try {
+    const response = await fetch(
+      GOOGLE_SHEET_WEBHOOK_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const responseText = await response.text();
+    let parsedResponse = responseText;
+
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch {
+      // leave as plain text when not JSON
+    }
+
+    console.log("Google Sheet create response:", {
+      status: response.status,
+      ok: response.ok,
+      body: parsedResponse,
+      payload,
+    });
+
+    if (!response.ok) {
+      const errorMessage = `Google Apps Script rejected the create request: ${response.status} ${responseText || "empty response"}`;
+      console.error(errorMessage, {
+        status: response.status,
+        body: parsedResponse,
+        payload,
+      });
+      throw new Error(errorMessage);
+    }
+
+    return parsedResponse;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("Google Sheet registration error:", {
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
+      payload,
+    });
+
+    throw error;
+  }
+}

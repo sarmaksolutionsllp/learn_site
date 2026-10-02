@@ -1,0 +1,1188 @@
+/************************************************************
+ * SARMAK WEBINAR REGISTRATION + WHATSAPP AUTOMATION
+ *
+ * SHEET:
+ *
+ * A = Date
+ * B = OrderID
+ * C = Name
+ * D = Email
+ * E = Whatsapp
+ * F = Country
+ * G = Payment Status
+ * H = WhatsApp Status
+ ************************************************************/
+
+
+/************************************************************
+ * 1. CONFIGURATION
+ ************************************************************/
+
+const WEBINAR_SPREADSHEET_ID =
+  "1arOYw0_-PgZM0-kDOUwvg_oXpQelTJkOniFxG06ih2U";
+
+const WEBINAR_SHEET_NAME =
+  "Webinar Registrations";
+
+const WASENDER_API_URL =
+  "https://www.wasenderapi.com/api/send-message";
+
+
+/*
+ * SAME WHATSAPP GROUP LINK FOR EVERYONE
+ */
+const WHATSAPP_GROUP_LINK =
+  "https://chat.whatsapp.com/K90PGeiJVsMFAJmzsnuLJ5";
+
+
+/*
+ * WEBINAR DATE
+ */
+const WEBINAR_DATE =
+  "September 27th";
+
+
+/************************************************************
+ * 2. COLUMN NUMBERS
+ ************************************************************/
+
+const COL = {
+
+  DATE: 1,
+  ORDER_ID: 2,
+  NAME: 3,
+  EMAIL: 4,
+  WHATSAPP: 5,
+  COUNTRY: 6,
+  PAYMENT_STATUS: 7,
+  WHATSAPP_STATUS: 8
+
+};
+
+
+/************************************************************
+ * 3. GET TEST
+ *
+ * When you open /exec in browser,
+ * this should appear.
+ ************************************************************/
+
+function doGet() {
+
+  return ContentService
+    .createTextOutput(
+      JSON.stringify({
+
+        success: true,
+
+        message:
+          "SARMAK Webinar Apps Script Web App is running.",
+
+        method:
+          "GET"
+
+      })
+    )
+    .setMimeType(
+      ContentService.MimeType.JSON
+    );
+
+}
+
+
+/************************************************************
+ * 4. POST WEBHOOK
+ ************************************************************/
+
+function doPost(e) {
+
+  try {
+
+    if (
+      !e ||
+      !e.postData ||
+      !e.postData.contents
+    ) {
+
+      throw new Error(
+        "No POST data received."
+      );
+
+    }
+
+
+    const data =
+      JSON.parse(
+        e.postData.contents
+      );
+
+
+    const action =
+      String(
+        data.action || "create"
+      )
+      .trim();
+
+
+    const spreadsheet =
+      SpreadsheetApp.openById(
+        WEBINAR_SPREADSHEET_ID
+      );
+
+
+    const sheet =
+      spreadsheet.getSheetByName(
+        WEBINAR_SHEET_NAME
+      );
+
+
+    if (!sheet) {
+
+      throw new Error(
+        'Sheet "Webinar Registrations" not found.'
+      );
+
+    }
+
+
+    /****************************************************
+     * CREATE REGISTRATION
+     ****************************************************/
+
+    if (action === "create") {
+
+      const orderId =
+        String(
+          data.orderId || ""
+        ).trim();
+
+
+      const name =
+        String(
+          data.name || ""
+        ).trim();
+
+
+      const email =
+        String(
+          data.email || ""
+        ).trim();
+
+
+      const phone =
+        String(
+          data.phone || ""
+        ).trim();
+
+
+      const country =
+        String(
+          data.country || ""
+        ).trim();
+
+
+      const dialCode =
+        String(
+          data.dialCode || ""
+        ).trim();
+
+
+      const paymentStatus =
+        String(
+          data.paymentStatus || "PENDING"
+        )
+        .trim()
+        .toUpperCase();
+
+
+      const countryWithCode =
+        dialCode
+          ? `${country} (${dialCode})`
+          : country;
+
+
+      /*
+       * Automatically determine WhatsApp status.
+       */
+
+      let whatsappStatus =
+        "Waiting Payment";
+
+
+      if (
+        paymentStatus === "PAID" ||
+        paymentStatus === "SUCCESS"
+      ) {
+
+        whatsappStatus =
+          "Pending";
+
+      }
+
+
+      /*
+       * Save A-H
+       */
+
+      sheet.appendRow([
+
+        new Date(),
+
+        orderId,
+
+        name,
+
+        email,
+
+        phone,
+
+        countryWithCode,
+
+        paymentStatus,
+
+        whatsappStatus
+
+      ]);
+
+
+      return jsonResponse({
+
+        success:
+          true,
+
+        message:
+          "Registration saved successfully",
+
+        orderId:
+          orderId,
+
+        paymentStatus:
+          paymentStatus,
+
+        whatsappStatus:
+          whatsappStatus
+
+      });
+
+    }
+
+
+    /****************************************************
+     * UPDATE PAYMENT STATUS
+     ****************************************************/
+
+    if (action === "updateStatus") {
+
+      const orderId =
+        String(
+          data.orderId || ""
+        ).trim();
+
+
+      const paymentStatus =
+        String(
+          data.paymentStatus || ""
+        )
+        .trim()
+        .toUpperCase();
+
+
+      if (!orderId) {
+
+        throw new Error(
+          "Order ID is required."
+        );
+
+      }
+
+
+      if (!paymentStatus) {
+
+        throw new Error(
+          "Payment status is required."
+        );
+
+      }
+
+
+      const lastRow =
+        sheet.getLastRow();
+
+
+      if (lastRow < 2) {
+
+        return jsonResponse({
+
+          success:
+            false,
+
+          message:
+            "No registrations found."
+
+        });
+
+      }
+
+
+      /*
+       * Read Order IDs from column B.
+       */
+
+      const orderIds =
+        sheet
+          .getRange(
+            2,
+            COL.ORDER_ID,
+            lastRow - 1,
+            1
+          )
+          .getValues();
+
+
+      for (
+        let i = 0;
+        i < orderIds.length;
+        i++
+      ) {
+
+        const existingOrderId =
+          String(
+            orderIds[i][0] || ""
+          ).trim();
+
+
+        if (
+          existingOrderId === orderId
+        ) {
+
+          const rowNumber =
+            i + 2;
+
+
+          /*
+           * Update Payment Status.
+           */
+
+          sheet
+            .getRange(
+              rowNumber,
+              COL.PAYMENT_STATUS
+            )
+            .setValue(
+              paymentStatus
+            );
+
+
+          /*
+           * Read current WhatsApp status.
+           */
+
+          const whatsappStatusCell =
+            sheet.getRange(
+              rowNumber,
+              COL.WHATSAPP_STATUS
+            );
+
+
+          const currentWhatsAppStatus =
+            String(
+              whatsappStatusCell.getValue() || ""
+            )
+            .trim()
+            .toLowerCase();
+
+
+          /*
+           * PAID / SUCCESS
+           *
+           * PAID
+           *   ↓
+           * Pending
+           */
+
+          if (
+            paymentStatus === "PAID" ||
+            paymentStatus === "SUCCESS"
+          ) {
+
+            if (
+              currentWhatsAppStatus !==
+              "welcome sent"
+            ) {
+
+              whatsappStatusCell
+                .setValue(
+                  "Pending"
+                );
+
+            }
+
+          }
+
+
+          /*
+           * Other payment states
+           */
+
+          else {
+
+            if (
+              currentWhatsAppStatus !==
+              "welcome sent"
+            ) {
+
+              whatsappStatusCell
+                .setValue(
+                  "Waiting Payment"
+                );
+
+            }
+
+          }
+
+
+          return jsonResponse({
+
+            success:
+              true,
+
+            message:
+              "Payment status updated",
+
+            orderId:
+              orderId,
+
+            paymentStatus:
+              paymentStatus,
+
+            whatsappStatus:
+              whatsappStatusCell
+                .getValue()
+
+          });
+
+        }
+
+      }
+
+
+      /*
+       * Order ID not found.
+       */
+
+      return jsonResponse({
+
+        success:
+          false,
+
+        message:
+          "Order ID not found",
+
+        orderId:
+          orderId
+
+      });
+
+    }
+
+
+    /****************************************************
+     * INVALID ACTION
+     ****************************************************/
+
+    return jsonResponse({
+
+      success:
+        false,
+
+      message:
+        "Invalid action."
+
+    });
+
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+
+    return jsonResponse({
+
+      success:
+        false,
+
+      error:
+        error.toString()
+
+    });
+
+  }
+
+}
+
+
+/************************************************************
+ * 5. MANUAL SHEET EDIT AUTOMATION
+ *
+ * If someone manually changes:
+ *
+ * G = PAID
+ *
+ * automatically:
+ *
+ * H = Pending
+ ************************************************************/
+
+function onEdit(e) {
+
+  try {
+
+    if (
+      !e ||
+      !e.range
+    ) {
+
+      return;
+
+    }
+
+
+    const sheet =
+      e.range.getSheet();
+
+
+    if (
+      sheet.getName() !==
+      WEBINAR_SHEET_NAME
+    ) {
+
+      return;
+
+    }
+
+
+    /*
+     * Only column G.
+     */
+
+    if (
+      e.range.getColumn() !==
+      COL.PAYMENT_STATUS
+    ) {
+
+      return;
+
+    }
+
+
+    /*
+     * Only one cell.
+     */
+
+    if (
+      e.range.getNumRows() !== 1 ||
+      e.range.getNumColumns() !== 1
+    ) {
+
+      return;
+
+    }
+
+
+    const rowNumber =
+      e.range.getRow();
+
+
+    if (
+      rowNumber < 2
+    ) {
+
+      return;
+
+    }
+
+
+    const paymentStatus =
+      String(
+        e.range.getValue() || ""
+      )
+      .trim()
+      .toUpperCase();
+
+
+    const whatsappStatusCell =
+      sheet.getRange(
+        rowNumber,
+        COL.WHATSAPP_STATUS
+      );
+
+
+    const currentWhatsAppStatus =
+      String(
+        whatsappStatusCell.getValue() || ""
+      )
+      .trim()
+      .toLowerCase();
+
+
+    /*
+     * PAID → Pending
+     */
+
+    if (
+      paymentStatus === "PAID" ||
+      paymentStatus === "SUCCESS"
+    ) {
+
+      if (
+        currentWhatsAppStatus !==
+        "welcome sent"
+      ) {
+
+        whatsappStatusCell
+          .setValue(
+            "Pending"
+          );
+
+      }
+
+    }
+
+
+    /*
+     * Anything else → Waiting Payment
+     */
+
+    else {
+
+      if (
+        currentWhatsAppStatus !==
+        "welcome sent"
+      ) {
+
+        whatsappStatusCell
+          .setValue(
+            "Waiting Payment"
+          );
+
+      }
+
+    }
+
+  } catch (error) {
+
+    console.error(
+      "onEdit error: " +
+      error.toString()
+    );
+
+  }
+
+}
+
+
+/************************************************************
+ * 6. WHATSAPP AUTOMATION
+ ************************************************************/
+
+function processWhatsAppMessages() {
+
+  const lock =
+    LockService.getScriptLock();
+
+
+  if (
+    !lock.tryLock(5000)
+  ) {
+
+    console.log(
+      "Another WhatsApp process is already running."
+    );
+
+    return;
+
+  }
+
+
+  try {
+
+    const spreadsheet =
+      SpreadsheetApp.openById(
+        WEBINAR_SPREADSHEET_ID
+      );
+
+
+    const sheet =
+      spreadsheet.getSheetByName(
+        WEBINAR_SHEET_NAME
+      );
+
+
+    if (!sheet) {
+
+      throw new Error(
+        'Sheet "Webinar Registrations" not found.'
+      );
+
+    }
+
+
+    const lastRow =
+      sheet.getLastRow();
+
+
+    if (
+      lastRow < 2
+    ) {
+
+      console.log(
+        "No registrations found."
+      );
+
+      return;
+
+    }
+
+
+    const values =
+      sheet
+        .getRange(
+          2,
+          1,
+          lastRow - 1,
+          8
+        )
+        .getValues();
+
+
+    /*
+     * One WhatsApp message per trigger run.
+     */
+
+    const MAX_MESSAGES_PER_RUN = 1;
+
+
+    let messagesSent = 0;
+
+
+    for (
+      let i = 0;
+      i < values.length;
+      i++
+    ) {
+
+      if (
+        messagesSent >=
+        MAX_MESSAGES_PER_RUN
+      ) {
+
+        break;
+
+      }
+
+
+      const rowNumber =
+        i + 2;
+
+
+      const name =
+        String(
+          values[i][COL.NAME - 1] || ""
+        ).trim();
+
+
+      const phone =
+        String(
+          values[i][COL.WHATSAPP - 1] || ""
+        ).trim();
+
+
+      const paymentStatus =
+        String(
+          values[i][COL.PAYMENT_STATUS - 1] || ""
+        )
+        .trim()
+        .toUpperCase();
+
+
+      const whatsappStatus =
+        String(
+          values[i][COL.WHATSAPP_STATUS - 1] || ""
+        )
+        .trim()
+        .toLowerCase();
+
+
+      console.log(
+        "ROW " +
+        rowNumber +
+        " | Payment=" +
+        paymentStatus +
+        " | WhatsAppStatus=" +
+        whatsappStatus +
+        " | Name=" +
+        name +
+        " | Phone=" +
+        phone
+      );
+
+
+      /*
+       * Only paid registrations.
+       */
+
+      if (
+        paymentStatus !== "PAID" &&
+        paymentStatus !== "SUCCESS"
+      ) {
+
+        continue;
+
+      }
+
+
+      /*
+       * Name + phone required.
+       */
+
+      if (
+        !name ||
+        !phone
+      ) {
+
+        console.log(
+          "Skipping row " +
+          rowNumber +
+          ": missing name or phone."
+        );
+
+        continue;
+
+      }
+
+
+      /*
+       * Only Pending.
+       */
+
+      if (
+        whatsappStatus !== "pending"
+      ) {
+
+        continue;
+
+      }
+
+
+      try {
+
+        sendWelcomeWhatsAppMessage_(
+          sheet,
+          rowNumber,
+          name,
+          phone
+        );
+
+
+        messagesSent++;
+
+
+      } catch (error) {
+
+        console.error(
+
+          "WhatsApp failed for row " +
+          rowNumber +
+          ": " +
+          error.message
+
+        );
+
+      }
+
+    }
+
+
+    console.log(
+      "WhatsApp messages sent: " +
+      messagesSent
+    );
+
+
+  } finally {
+
+    lock.releaseLock();
+
+  }
+
+}
+
+
+/************************************************************
+ * 7. WELCOME MESSAGE
+ ************************************************************/
+
+function sendWelcomeWhatsAppMessage_(
+  sheet,
+  rowNumber,
+  name,
+  phone
+) {
+
+  const message =
+
+    "Hi " +
+    name +
+    ", welcome aboard! We’ve received your payment and your spot is secured for our " +
+    WEBINAR_DATE +
+    " webinar. Please click the link below to join our WhatsApp Broadcast Group so you don't miss any updates:\n\n" +
+
+    WHATSAPP_GROUP_LINK;
+
+
+  console.log(
+    "Sending WhatsApp to " +
+    phone
+  );
+
+
+  sendWhatsApp_(
+    phone,
+    message
+  );
+
+
+  /*
+   * Only after successful Wasender response.
+   */
+
+  sheet
+    .getRange(
+      rowNumber,
+      COL.WHATSAPP_STATUS
+    )
+    .setValue(
+      "Welcome Sent"
+    );
+
+
+  console.log(
+    "Welcome message sent to " +
+    name
+  );
+
+}
+
+
+/************************************************************
+ * 8. WASENDER API
+ ************************************************************/
+
+function sendWhatsApp_(
+  phone,
+  message
+) {
+
+  const apiKey =
+    PropertiesService
+      .getScriptProperties()
+      .getProperty(
+        "WASENDER_API_KEY"
+      );
+
+
+  if (!apiKey) {
+
+    throw new Error(
+      "WASENDER_API_KEY is missing from Script Properties."
+    );
+
+  }
+
+
+  const recipient =
+    normalizePhone_(
+      phone
+    );
+
+
+  const payload = {
+
+    to:
+      recipient,
+
+    text:
+      message
+
+  };
+
+
+  const options = {
+
+    method:
+      "post",
+
+    contentType:
+      "application/json",
+
+    headers: {
+
+      Authorization:
+        "Bearer " +
+        apiKey
+
+    },
+
+    payload:
+      JSON.stringify(
+        payload
+      ),
+
+    muteHttpExceptions:
+      true
+
+  };
+
+
+  const response =
+    UrlFetchApp.fetch(
+      WASENDER_API_URL,
+      options
+    );
+
+
+  const httpCode =
+    response.getResponseCode();
+
+
+  const responseText =
+    response.getContentText();
+
+
+  console.log(
+    "Wasender HTTP Code: " +
+    httpCode
+  );
+
+
+  console.log(
+    "Wasender Response: " +
+    responseText
+  );
+
+
+  let result = null;
+
+
+  try {
+
+    result =
+      JSON.parse(
+        responseText
+      );
+
+  } catch (error) {
+
+    result = null;
+
+  }
+
+
+  if (
+    httpCode >= 200 &&
+    httpCode < 300 &&
+    result &&
+    result.success === true
+  ) {
+
+    return;
+
+  }
+
+
+  throw new Error(
+
+    "WasenderAPI error. HTTP " +
+    httpCode +
+    ": " +
+    responseText
+
+  );
+
+}
+
+
+/************************************************************
+ * 9. PHONE NORMALIZATION
+ ************************************************************/
+
+function normalizePhone_(
+  phone
+) {
+
+  let number =
+    String(
+      phone || ""
+    )
+    .trim()
+    .replace(
+      /[\s\-().]/g,
+      ""
+    );
+
+
+  number =
+    number.replace(
+      /^\+/,
+      ""
+    );
+
+
+  if (!number) {
+
+    throw new Error(
+      "Phone number is empty."
+    );
+
+  }
+
+
+  return "+" + number;
+
+}
+
+
+/************************************************************
+ * 10. MANUAL TEST
+ ************************************************************/
+
+function testWhatsAppAutomation() {
+
+  processWhatsAppMessages();
+
+}
+
+
+/************************************************************
+ * 11. JSON RESPONSE
+ ************************************************************/
+
+function jsonResponse(
+  data
+) {
+
+  return ContentService
+
+    .createTextOutput(
+      JSON.stringify(
+        data
+      )
+    )
+
+    .setMimeType(
+      ContentService.MimeType.JSON
+    );
+
+}

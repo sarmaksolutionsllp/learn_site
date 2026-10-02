@@ -1,3 +1,6 @@
+const GOOGLE_SHEET_WEBHOOK_URL =
+  process.env.GOOGLE_SHEET_WEBHOOK_URL?.trim();
+
 exports.handler = async (event) => {
 
   // ==================================================
@@ -39,16 +42,17 @@ exports.handler = async (event) => {
     // ==================================================
 
     const mode =
-      process.env.CASHFREE_MODE ||
-      'sandbox';
+      (process.env.CASHFREE_ENV || process.env.CASHFREE_MODE || 'sandbox')
+        .trim()
+        .toLowerCase();
 
 
     const clientId =
-      process.env.CASHFREE_CLIENT_ID;
+      process.env.CASHFREE_CLIENT_ID?.trim();
 
 
     const clientSecret =
-      process.env.CASHFREE_CLIENT_SECRET;
+      process.env.CASHFREE_CLIENT_SECRET?.trim();
 
 
     if (!clientId || !clientSecret) {
@@ -71,6 +75,19 @@ exports.handler = async (event) => {
 
         }),
 
+      };
+    }
+
+    if (mode !== 'sandbox' && mode !== 'production') {
+      return {
+        statusCode: 500,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          success: false,
+          error: 'CASHFREE_ENV must be either sandbox or production.',
+        }),
       };
     }
 
@@ -125,7 +142,10 @@ exports.handler = async (event) => {
 
 
     if (!response.ok) {
-
+      console.error(
+        "Cashfree verification error:",
+        payments
+      );
       return {
 
         statusCode:
@@ -225,7 +245,14 @@ exports.handler = async (event) => {
       finalStatus === 'SUCCESS' ||
       finalStatus === 'PAID'
     ) {
+      // ----------------------------------------------
+      // UPDATE GOOGLE SHEET
+      // ----------------------------------------------
 
+      await updateGoogleSheetStatus(
+        orderId,
+        "PAID"
+      );
       return {
 
         statusCode: 200,
@@ -260,9 +287,13 @@ exports.handler = async (event) => {
 
     if (
       finalStatus === 'PENDING' ||
-      finalStatus === 'ACTIVE'
+      finalStatus === 'ACTIVE' ||
+      finalStatus === "NOT_ATTEMPTED"
     ) {
-
+      await updateGoogleSheetStatus(
+        orderId,
+        "PENDING"
+      );
       return {
 
         statusCode: 200,
@@ -298,7 +329,10 @@ exports.handler = async (event) => {
     if (
       finalStatus === 'USER_DROPPED'
     ) {
-
+     await updateGoogleSheetStatus(
+        orderId,
+        "USER_DROPPED"
+      );
       return {
 
         statusCode: 200,
@@ -335,7 +369,10 @@ exports.handler = async (event) => {
       finalStatus === 'FAILED' ||
       finalStatus === 'FAILURE'
     ) {
-
+      await updateGoogleSheetStatus(
+        orderId,
+        "FAILED"
+      );
       return {
 
         statusCode: 200,
@@ -367,6 +404,10 @@ exports.handler = async (event) => {
     // ==================================================
     // UNKNOWN / NOT COMPLETED
     // ==================================================
+    await updateGoogleSheetStatus(
+      orderId,
+      finalStatus
+    );
 
     return {
 
@@ -426,3 +467,84 @@ exports.handler = async (event) => {
 
   }
 };
+
+
+// ======================================================
+// UPDATE GOOGLE SHEET PAYMENT STATUS
+// ======================================================
+
+async function updateGoogleSheetStatus(
+  orderId,
+  paymentStatus
+) {
+  const payload = {
+    action: "updateStatus",
+    orderId,
+    paymentStatus,
+  };
+
+  // --------------------------------------------------
+  // Check Google Sheet URL
+  // --------------------------------------------------
+
+  if (!GOOGLE_SHEET_WEBHOOK_URL) {
+    const message = "GOOGLE_SHEET_WEBHOOK_URL is not configured.";
+    console.error(message, { payload });
+    throw new Error(message);
+  }
+
+  try {
+    // ------------------------------------------------
+    // Send request to Google Apps Script
+    // ------------------------------------------------
+
+    const response = await fetch(
+      GOOGLE_SHEET_WEBHOOK_URL,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const responseText = await response.text();
+    let parsedResponse = responseText;
+
+    try {
+      parsedResponse = JSON.parse(responseText);
+    } catch {
+      // leave as plain text when not JSON
+    }
+
+    console.log("Google Sheet status update response:", {
+      status: response.status,
+      ok: response.ok,
+      body: parsedResponse,
+      payload,
+    });
+
+    if (!response.ok) {
+      const errorMessage = `Google Apps Script rejected the status update: ${response.status} ${responseText || "empty response"}`;
+      console.error(errorMessage, {
+        status: response.status,
+        body: parsedResponse,
+        payload,
+      });
+      throw new Error(errorMessage);
+    }
+
+    return parsedResponse;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    console.error("Google Sheet status update error:", {
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
+      payload,
+    });
+
+    throw error;
+  }
+}
